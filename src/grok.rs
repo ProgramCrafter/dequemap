@@ -1,7 +1,7 @@
 use ftree::FenwickTree;
 use std::borrow::Borrow;
 use std::cmp::Ordering;
-use std::iter::FlatMap;
+use std::iter::{Flatten, FlatMap, Map};
 use std::ops::{Bound, RangeBounds};
 
 // Constants
@@ -14,11 +14,16 @@ pub struct DequeMap<K, V> {
     node_capacity: usize,
 }
 
+fn only_key<K, V>((k, _): (K, V)) -> K {k}
+fn only_val<K, V>((_, v): (K, V)) -> V {v}
+
 // Iterator types
+pub type IntoItems<K, V>  = Flatten<std::vec::IntoIter<Vec<(K, V)>>>;
+pub type IntoKeys<K, V>   = Map<IntoItems<K, V>, fn((K, V)) -> K>;
+pub type IntoValues<K, V> = Map<IntoItems<K, V>, fn((K, V)) -> V>;
+
 pub struct IterMap<'a, K: 'a, V: 'a>(FlatMap<std::slice::Iter<'a, Vec<(K, V)>>, std::slice::Iter<'a, (K, V)>, fn(&'a Vec<(K, V)>) -> std::slice::Iter<'a, (K, V)>>);
 pub struct IterMut<'a, K: 'a, V: 'a>(FlatMap<std::slice::IterMut<'a, Vec<(K, V)>>, std::slice::IterMut<'a, (K, V)>, fn(&'a mut Vec<(K, V)>) -> std::slice::IterMut<'a, (K, V)>>);
-pub struct IntoKeys<K, V> { inner: std::vec::IntoIter<Vec<(K, V)>> }
-pub struct IntoValues<K, V> { inner: std::vec::IntoIter<Vec<(K, V)>> }
 pub struct Keys<'a, K: 'a, V: 'a>(IterMap<'a, K, V>);
 pub struct Values<'a, K: 'a, V: 'a>(IterMap<'a, K, V>);
 pub struct ValuesMut<'a, K: 'a, V: 'a>(IterMut<'a, K, V>);
@@ -264,13 +269,17 @@ where
             None
         }
     }
+    
+    pub fn consume(self) -> IntoItems<K, V> {
+        self.sublists.into_iter().flatten()
+    }
 
     pub fn into_keys(self) -> IntoKeys<K, V> {
-        IntoKeys { inner: self.sublists.into_iter() }
+        self.consume().map(only_key)
     }
 
     pub fn into_values(self) -> IntoValues<K, V> {
-        IntoValues { inner: self.sublists.into_iter() }
+        self.consume().map(only_val)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -366,6 +375,7 @@ where
             Bound::Excluded(key) => self.find_lower_bound(key),
             Bound::Unbounded => (self.sublists.len(), 0),
         };
+        dbg!(&self.fenwick, &start, &end);
         RangeMap {
             sublists: &self.sublists,
             sublist_idx: start.0,
@@ -656,22 +666,6 @@ impl<'a, K, V> Iterator for IterMut<'a, K, V> {
     }
 }
 
-impl<K, V> Iterator for IntoKeys<K, V> {
-    type Item = K;
-    fn next(&mut self) -> Option<Self::Item> {
-        let sublist_iter = self.inner.next()?;
-        sublist_iter.into_iter().next().map(|(k, _)| k)
-    }
-}
-
-impl<K, V> Iterator for IntoValues<K, V> {
-    type Item = V;
-    fn next(&mut self) -> Option<Self::Item> {
-        let sublist_iter = self.inner.next()?;
-        sublist_iter.into_iter().next().map(|(_, v)| v)
-    }
-}
-
 impl<'a, K, V> Iterator for Keys<'a, K, V> {
     type Item = &'a K;
     fn next(&mut self) -> Option<Self::Item> {
@@ -696,16 +690,17 @@ impl<'a, K, V> Iterator for ValuesMut<'a, K, V> {
 impl<'a, K, V> Iterator for RangeMap<'a, K, V> {
     type Item = (&'a K, &'a V);
     fn next(&mut self) -> Option<Self::Item> {
+        let mut sublist = &self.sublists[self.sublist_idx];
+        while self.pos >= sublist.len() && self.sublist_idx + 1 < self.end_sublist_idx {
+            self.sublist_idx += 1;
+            sublist = &self.sublists[self.sublist_idx];
+            self.pos = 0;
+        }
         if self.sublist_idx > self.end_sublist_idx || (self.sublist_idx == self.end_sublist_idx && self.pos >= self.end_pos) {
             return None;
         }
-        let sublist = &self.sublists[self.sublist_idx];
         let (k, v) = &sublist[self.pos];
         self.pos += 1;
-        if self.pos >= sublist.len() && self.sublist_idx < self.end_sublist_idx {
-            self.sublist_idx += 1;
-            self.pos = 0;
-        }
         Some((k, v))
     }
 }
@@ -741,6 +736,20 @@ impl<'a, K: 'a, V: 'a> Iterator for CursorMap<'a, K, V> {
             self.pos += 1;
             Some((k, v))
         }
+    }
+}
+impl<'a, K: 'a, V: 'a> CursorMap<'a, K, V> {
+    pub fn key(&self) -> Option<&K> {
+        let mut sublists_it = self.sublists[self.sublist_idx..].iter();
+        let mut sublist = sublists_it.next()?;
+        let mut pos = self.pos;
+        
+        while pos >= sublist.len() {
+            pos = 0;
+            sublist = sublists_it.next()?;
+        }
+        
+        sublist.get(pos).map(|(k, _)| k)
     }
 }
 
@@ -810,3 +819,13 @@ impl<'a, K: Ord, V> OccupiedEntry<'a, K, V> {
         std::mem::replace(&mut self.map.sublists[self.sublist_idx][self.pos].1, value)
     }
 }
+
+impl<'a, K: Ord, V> Entry<'a, K, V> {
+    pub fn or_insert(self, default: V) -> &'a mut V {
+        match self {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => entry.insert(default),
+        }
+    }
+}
+
