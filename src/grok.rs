@@ -1,31 +1,55 @@
-use ftree::FenwickTree;
-use std::borrow::Borrow;
 use std::iter::{Flatten, FlatMap, Map};
 use std::ops::{Bound, RangeBounds};
+use std::borrow::Borrow;
+use std::cmp::Ordering;
+use ftree::FenwickTree;
 
-// Constants
 const NODE_CAPACITY: usize = 64;
 
 // Main structure
+#[derive(Debug)]
 pub struct DequeMap<K, V> {
     sublists: Vec<Vec<(K, V)>>,
     fenwick: FenwickTree<usize>,
     node_capacity: usize,
 }
 
-fn only_key<K, V>((k, _): (K, V)) -> K {k}
-fn only_val<K, V>((_, v): (K, V)) -> V {v}
+
+/// Until #[feature(substr_range)] is stabilized
+#[inline]
+fn slice_element_offset<T>(origin: &[T], element: &T) -> Option<usize> {
+    let t_size = std::mem::size_of::<T>();
+    if t_size == 0 {
+        panic!("elements are zero-sized");
+    }
+    
+    let self_start = origin.as_ptr().addr();
+    let elem_start = std::ptr::from_ref(element).addr();
+    let byte_offset = elem_start.wrapping_sub(self_start);
+    if byte_offset % t_size != 0 {
+        return None;
+    }
+    
+    let offset = byte_offset / t_size;
+    if offset < origin.len() { Some(offset) } else { None }
+}
+
+fn reborrow<'a, K: 'a, V: 'a>((r,s): &'a (K, V)) -> (&'a K, &'a V) {
+    (r, s)
+}
+
 
 // Iterator types
 pub type IntoItems<K, V>  = Flatten<std::vec::IntoIter<Vec<(K, V)>>>;
 pub type IntoKeys<K, V>   = Map<IntoItems<K, V>, fn((K, V)) -> K>;
 pub type IntoValues<K, V> = Map<IntoItems<K, V>, fn((K, V)) -> V>;
+type Iter<'a, K, V>       = FlatMap<std::slice::Iter<'a, Vec<(K, V)>>, std::slice::Iter<'a, (K, V)>, fn(&'a Vec<(K, V)>) -> std::slice::Iter<'a, (K, V)>>;
+pub type IterMap<'a, K, V>   = Map<Iter<'a, K, V>, fn(&'a (K, V)) -> (&'a K, &'a V)>;
+pub type Keys<'a, K, V>      = Map<Iter<'a, K, V>, fn(&'a (K, V)) -> &'a K>;
+pub type Values<'a, K, V>    = Map<Iter<'a, K, V>, fn(&'a (K, V)) -> &'a V>;
+pub type ValuesMut<'a, K, V> = Map<IterMut<'a, K, V>, fn(&'a mut (K, V)) -> &'a mut V>;
 
-pub struct IterMap<'a, K: 'a, V: 'a>(FlatMap<std::slice::Iter<'a, Vec<(K, V)>>, std::slice::Iter<'a, (K, V)>, fn(&'a Vec<(K, V)>) -> std::slice::Iter<'a, (K, V)>>);
-pub struct IterMut<'a, K: 'a, V: 'a>(FlatMap<std::slice::IterMut<'a, Vec<(K, V)>>, std::slice::IterMut<'a, (K, V)>, fn(&'a mut Vec<(K, V)>) -> std::slice::IterMut<'a, (K, V)>>);
-pub struct Keys<'a, K: 'a, V: 'a>(IterMap<'a, K, V>);
-pub struct Values<'a, K: 'a, V: 'a>(IterMap<'a, K, V>);
-pub struct ValuesMut<'a, K: 'a, V: 'a>(IterMut<'a, K, V>);
+type IterMut<'a, K, V> = FlatMap<std::slice::IterMut<'a, Vec<(K, V)>>, std::slice::IterMut<'a, (K, V)>, fn(&'a mut Vec<(K, V)>) -> std::slice::IterMut<'a, (K, V)>>;
 pub struct RangeMap<'a, K: 'a, V: 'a> {
     current_front_iter: Option<std::slice::Iter<'a, (K, V)>>,
     remaining_sublists: std::slice::Iter<'a, Vec<(K, V)>>,
@@ -65,7 +89,8 @@ where
     K: Ord,
 {
     // --- Auxiliary Functions ---
-
+    
+    #[deprecated]
     fn find_sublist_for_key<Q>(&self, key: &Q) -> (usize, Option<usize>)
     where
         K: Borrow<Q>,
@@ -74,7 +99,7 @@ where
         let i = self.sublists.partition_point(|sublist| {
             if sublist.is_empty() { true } else { sublist[0].0.borrow() < key }
         });
-        let consider = if i == 0 { 0 } else { i - 1 };
+        let consider = i.saturating_sub(1);
         let sublist = &self.sublists[consider];
         if sublist.is_empty() || key < sublist[0].0.borrow() {
             (consider, None)
@@ -88,34 +113,12 @@ where
         }
     }
 
-    fn find_sublist_for_index(&self, index: usize) -> Option<(usize, usize)> {
-        if index >= self.len() {
-            None
-        } else {
-            let mut low = 0;
-            let mut high = self.sublists.len();
-            while low < high {
-                let mid = low + (high - low) / 2;
-                if self.fenwick.prefix_sum(mid, 0) <= index {
-                    low = mid + 1;
-                } else {
-                    high = mid;
-                }
-            }
-            let sublist_idx = low - 1;
-            let offset = self.fenwick.prefix_sum(sublist_idx, 0);
-            let pos = index - offset;
-            Some((sublist_idx, pos))
-        }
-    }
-
     fn split_sublist(&mut self, idx: usize) {
         let sublist = &mut self.sublists[idx];
         let mid = sublist.len() / 2;
         let new_sublist = sublist.split_off(mid);
         self.sublists.insert(idx + 1, new_sublist);
-        let sizes = self.sublists.iter().map(|s| s.len());
-        self.fenwick = FenwickTree::from_iter(sizes);
+        self.rebuild_fenwick();
     }
 
     fn rebuild_fenwick(&mut self) {
@@ -123,43 +126,101 @@ where
         self.fenwick = FenwickTree::from_iter(sizes);
     }
     
-    fn find_lower_bound<Q>(&self, key: &Q) -> (usize, usize)
+    pub fn validate_buckets(&self) where (K, V): std::fmt::Debug {
+        assert!(!self.sublists.is_empty());
+        assert_eq!(self.sublists.iter().map(|sl| sl.len()).sum::<usize>(), self.len());
+        
+        assert!(self.keys().is_sorted());
+    }
+    
+    /// The comparator function should return an order code whether `Node`
+    /// with specified index is Less, Equal or Greater than required one.
+    /// 
+    /// If a suitable node is found then [`Result::Ok`] is returned,
+    /// referring to it. Alternatively, [`Result::Err`] is returned showing
+    /// where a matching node could be inserted while maintaining sorted
+    /// order.
+    fn locate_node_by<P>(&self, mut cmp: P) -> Result<(usize, &Vec<(K, V)>), usize>
     where
-        K: Borrow<Q>,
-        Q: Ord + ?Sized,
+        P: FnMut(usize, &Vec<(K, V)>) -> Ordering
     {
-        let idx = self.sublists.partition_point(|sublist| {
-            sublist.is_empty() || sublist[0].0.borrow() < key
-        });
-        let consider = idx.saturating_sub(1);
-        let sublist = &self.sublists[consider];
-        let pos = sublist.partition_point(|(k, _)| k.borrow() < key);
-        if pos < sublist.len() {
-            (consider, pos)
-        } else if consider + 1 < self.sublists.len() {
-            (consider + 1, 0)
-        } else {
-            (self.sublists.len(), 0)
+        self.sublists
+            .binary_search_by(|node| {
+                cmp(slice_element_offset(&self.sublists, node).unwrap(),
+                    node)
+            })
+            .map(|node_id| (node_id, &self.sublists[node_id]))
+    }
+    
+    /// For 0 <= idx < self.len(), locates node containing that element.
+    fn locate_node_with_idx_inbounds(&self, idx: usize) -> (usize, &Vec<(K, V)>) {
+        self.locate_node_by(|node_id, contained| {
+            let prior_elements = self.fenwick.prefix_sum(node_id, 0);
+            if prior_elements > idx {
+                Ordering::Greater
+            } else if prior_elements + contained.len() > idx {
+                Ordering::Equal
+            } else {
+                Ordering::Less
+            }
+        }).expect("locate_node_by failed to produce node by index")
+    }
+    
+    /// For a key, locates a node which contains it, or could do so potentially.
+    fn locate_node_with_key<Q>(&self, key: &Q) -> (usize, &Vec<(K, V)>) where K: Borrow<Q>, Q: Ord + ?Sized {
+        match self.locate_node_by(|_, contained| {
+            if contained.is_empty() {  // invariant 2. it's the first sublist
+                Ordering::Less
+            } else if contained.last().unwrap().0.borrow() < key {
+                Ordering::Less
+            } else if contained[0].0.borrow() > key {
+                Ordering::Greater
+            } else {
+                Ordering::Equal
+            }
+        }) {
+            // contained[0] <= key <= contained[-1]
+            Ok((node_id, contained)) => (node_id, contained),
+            Err(mut n) => {
+                // The key should be inserted prior to self.sublists[n].
+                // In self.sublists[n-1], that is, if n is nonzero.
+                n = n.saturating_sub(1);
+                (n, &self.sublists[n])
+            }
         }
     }
-
-    fn find_upper_bound<Q>(&self, key: &Q) -> (usize, usize)
-    where
-        K: Borrow<Q>,
-        Q: Ord + ?Sized,
-    {
-        let idx = self.sublists.partition_point(|sublist| {
-            sublist.is_empty() || sublist[0].0.borrow() <= key
+    
+    /// Returns (sublist_idx, place) such that all elements with strictly smaller indices are lower than key,
+    /// and >= indices have elements greater than or equal to key.
+    fn find_lower_bound<Q>(&self, key: &Q) -> (usize, usize) where K: Borrow<Q>, Q: Ord + ?Sized {
+        let (sublist_idx, node) = self.locate_node_with_key(key);
+        match node.binary_search_by_key(&key, |(k,_)| k.borrow()) {
+            Ok(j)  => (sublist_idx, j),
+            Err(j) => (sublist_idx, j)
+        }
+    }
+    /// Returns (sublist_idx, place) such that all elements with strictly smaller indices are lower than or equal to key,
+    /// and >= indices have elements greater than key.
+    fn find_upper_bound<Q>(&self, key: &Q) -> (usize, usize) where K: Borrow<Q>, Q: Ord + ?Sized {
+        let upper_node: Result<_, _> = self.locate_node_by(|sublist_idx, contained| {
+            if contained.is_empty() {
+                Ordering::Less
+            } else if contained.last().unwrap().0.borrow() <= key {
+                Ordering::Less
+            } else if contained[0].0.borrow() > key {
+                Ordering::Greater
+            } else {
+                Ordering::Equal
+            }
         });
-        let consider = if idx == 0 { 0 } else { idx - 1 };
-        let sublist = &self.sublists[consider];
-        let pos = sublist.partition_point(|(k, _)| k.borrow() <= key);
-        if pos < sublist.len() {
-            (consider, pos)
-        } else if consider + 1 < self.sublists.len() {
-            (consider + 1, 0)
-        } else {
-            (self.sublists.len(), 0)
+        match upper_node {
+            Ok((sublist_idx, node)) => match node.binary_search_by_key(&key, |(k,_)| k.borrow()) {
+                Ok(j)  => (sublist_idx, j + 1),
+                Err(j) => (sublist_idx, j),
+            },
+            Err(sublist_place) => {
+                (sublist_place, 0)
+            }
         }
     }
 
@@ -180,125 +241,120 @@ where
             return;
         }
         
-        let other_sublists = std::mem::replace(&mut other.sublists, vec![Vec::with_capacity(NODE_CAPACITY)]);
-        self.sublists.extend(other_sublists);
+        self.sublists.extend(other.sublists.extract_if(.., |sl| !sl.is_empty()));
         self.rebuild_fenwick();
-        other.fenwick = FenwickTree::new();
-        other.fenwick.push(0);
+        other.clear();
     }
 
     pub fn clear(&mut self) {
         self.sublists = vec![Vec::with_capacity(NODE_CAPACITY)];
-        self.fenwick = FenwickTree::new();
-        self.fenwick.push(0);
-    }
-
-    pub fn contains_key<Q>(&self, key: &Q) -> bool
-    where
-        K: Borrow<Q>,
-        Q: Ord + ?Sized,
-    {
-        let (_, pos) = self.find_sublist_for_key(key);
-        pos.is_some()
+        self.fenwick = FenwickTree::from_iter([0]);
     }
 
     pub fn first_key_value(&self) -> Option<(&K, &V)> {
-        for sublist in &self.sublists {
-            if let Some((k, v)) = sublist.first() {
-                return Some((k, v));
+        self.sublists.iter().find_map(|sl| sl.first()).map(reborrow)
+    }
+    pub fn last_key_value(&self) -> Option<(&K, &V)> {
+        self.sublists.last().and_then(|sublist| sublist.last().map(|(k, v)| (k, v)))
+    }
+    pub fn first_entry(&mut self) -> Option<OccupiedEntry<'_, K, V>> {
+        match self.sublists.iter().position(|sl| !sl.is_empty()) {
+            None => None,
+            Some(sublist_idx) => Some(OccupiedEntry { map: self, sublist_idx, pos: 0 })
+        }
+    }
+    pub fn last_entry(&mut self) -> Option<OccupiedEntry<'_, K, V>> {
+        match self.sublists.iter().rposition(|sl| !sl.is_empty()) {
+            None => None,
+            Some(sublist_idx) => {
+                let pos = self.sublists[sublist_idx].len() - 1;
+                Some(OccupiedEntry { map: self, sublist_idx, pos })
             }
         }
-        None
-    }
-
-    pub fn get<Q>(&self, key: &Q) -> Option<&V>
-    where
-        K: Borrow<Q>,
-        Q: Ord + ?Sized,
-    {
-        let (sublist_idx, pos) = self.find_sublist_for_key(key);
-        pos.map(|j| &self.sublists[sublist_idx][j].1)
     }
 
     pub fn get_index(&self, idx: usize) -> Option<(&K, &V)> {
-        self.find_sublist_for_index(idx)
-            .map(|(sublist_idx, pos)| &self.sublists[sublist_idx][pos])
-            .map(|(k, v)| (k, v))
+        if idx >= self.len() {return None;}
+        let (sublist_idx, node) = self.locate_node_with_idx_inbounds(idx);
+        node.get(idx - self.fenwick.prefix_sum(sublist_idx, 0)).map(reborrow)
+    }
+    pub fn get_mut_index(&mut self, idx: usize) -> Option<&mut V> {
+        if idx >= self.len() {return None;}
+        let (sublist_idx, _) = self.locate_node_with_idx_inbounds(idx);
+        let node = &mut self.sublists[sublist_idx];
+        node.get_mut(idx - self.fenwick.prefix_sum(sublist_idx, 0)).map(|(_,v)| v)
     }
 
-    pub fn get_key_value<Q>(&self, key: &Q) -> Option<(&K, &V)>
-    where
-        K: Borrow<Q>,
-        Q: Ord + ?Sized,
-    {
-        let (sublist_idx, pos) = self.find_sublist_for_key(key);
-        pos.map(|j| &self.sublists[sublist_idx][j])
-            .map(|(k, v)| (k, v))
+    pub fn get_key_value<Q>(&self, key: &Q) -> Option<(&K, &V)> where K: Borrow<Q>, Q: Ord + ?Sized {
+        let (_, node) = self.locate_node_with_key(key);
+        let j = node.binary_search_by_key(&key, |(k,_)| k.borrow());
+        j.ok().and_then(|j| node.get(j)).map(reborrow)
     }
-
-    pub fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
-    where
-        K: Borrow<Q>,
-        Q: Ord + ?Sized,
-    {
-        let (sublist_idx, pos) = self.find_sublist_for_key(key);
-        pos.map(move |j| &mut self.sublists[sublist_idx][j].1)
+    pub fn get<Q>(&self, key: &Q) -> Option<&V> where K: Borrow<Q>, Q: Ord + ?Sized {
+        self.get_key_value(key).map(|(_, v)| v)
     }
-
-    pub fn get_mut_index(&mut self, index: usize) -> Option<&mut V> {
-        self.find_sublist_for_index(index)
-            .map(move |(sublist_idx, pos)| &mut self.sublists[sublist_idx][pos].1)
+    pub fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V> where K: Borrow<Q>, Q: Ord + ?Sized {
+        let (sublist_idx, node) = self.locate_node_with_key(key);
+        let j = node.binary_search_by_key(&key, |(k,_)| k.borrow());
+        let node = &mut self.sublists[sublist_idx];
+        j.ok().and_then(|j| node.get_mut(j)).map(|(_, v)| v)
+    }
+    pub fn contains_key<Q>(&self, key: &Q) -> bool where K: Borrow<Q>, Q: Ord + ?Sized {
+        self.get_key_value(key).is_some()
+    }
+    pub fn entry(&mut self, key: K) -> Entry<'_, K, V> {
+        let (sublist_idx, node) = self.locate_node_with_key(&key);
+        if let Ok(j) = node.binary_search_by_key(&&key, |(k,_)| k) {
+            Entry::Occupied(OccupiedEntry { map: self, sublist_idx, pos: j })
+        } else {
+            Entry::Vacant(VacantEntry { map: self, key, sublist_idx })
+        }
     }
 
     pub fn insert(&mut self, key: K, value: V) -> Option<V> {
-        let (sublist_idx, pos) = self.find_sublist_for_key(&key);
+        let (sublist_idx, _) = self.locate_node_with_key(&key);
         let sublist = &mut self.sublists[sublist_idx];
-        if let Some(j) = pos {
-            let old_value = std::mem::replace(&mut sublist[j].1, value);
-            Some(old_value)
-        } else {
-            let insert_pos = sublist.partition_point(|(k, _)| k < &key);
-            sublist.insert(insert_pos, (key, value));
-            self.fenwick.add_at(sublist_idx, 1);
-            if sublist.len() > self.node_capacity {
-                self.split_sublist(sublist_idx);
+        match sublist.binary_search_by_key(&&key, |(k,_)| k) {
+            Ok(j) => {
+                let old_value = std::mem::replace(&mut sublist[j].1, value);
+                Some(old_value)
+            },
+            Err(j) => {
+                sublist.insert(j, (key, value));
+                self.fenwick.add_at(sublist_idx, 1);
+                if sublist.len() > self.node_capacity {
+                    self.split_sublist(sublist_idx);
+                }
+                None
             }
-            None
         }
     }
     
     pub fn consume(self) -> IntoItems<K, V> {
         self.sublists.into_iter().flatten()
     }
-
     pub fn into_keys(self) -> IntoKeys<K, V> {
-        self.consume().map(only_key)
+        self.consume().map(|(k, _)| k)
     }
-
     pub fn into_values(self) -> IntoValues<K, V> {
-        self.consume().map(only_val)
+        self.consume().map(|(_, v)| v)
+    }
+    fn inner_iter(&self) -> Iter<'_, K, V> {
+        self.sublists.iter().flat_map(|sublist| sublist.iter())
+    }
+    pub fn iter(&self) -> IterMap<'_, K, V> {
+        self.inner_iter().map(reborrow)
+    }
+    pub fn keys(&self) -> Keys<'_, K, V> {
+        self.inner_iter().map(|(k, _)| k)
+    }
+    fn iter_mut(&mut self) -> IterMut<'_, K, V> {
+        self.sublists.iter_mut().flat_map(|sublist| sublist.iter_mut())
     }
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
-
-    pub fn iter(&self) -> IterMap<'_, K, V> {
-        IterMap(self.sublists.iter().flat_map(|sublist| sublist.iter()))
-    }
-
-    pub fn iter_mut(&mut self) -> IterMut<'_, K, V> {
-        IterMut(self.sublists.iter_mut().flat_map(|sublist| sublist.iter_mut()))
-    }
-
-    pub fn keys(&self) -> Keys<'_, K, V> {
-        Keys(self.iter())
-    }
-
-    pub fn last_key_value(&self) -> Option<(&K, &V)> {
-        self.sublists.last().and_then(|sublist| sublist.last().map(|(k, v)| (k, v)))
-    }
-
     pub fn len(&self) -> usize {
         self.fenwick.prefix_sum(self.sublists.len(), 0)
     }
@@ -312,48 +368,39 @@ where
         this.clear();
         this
     }
-
-    pub fn pop_first(&mut self) -> Option<(K, V)> {
-        for i in 0..self.sublists.len() {
-            if !self.sublists[i].is_empty() {
-                let (k, v) = self.sublists[i].remove(0);
-                self.fenwick.sub_at(i, 1);
-                if self.sublists[i].is_empty() && i > 0 {
-                    self.sublists.remove(i);
-                    self.rebuild_fenwick();
-                }
-                return Some((k, v));
-            }
-        }
-        None
-    }
-
-    pub fn pop_index(&mut self, index: usize) -> (K, V) {
-        let (sublist_idx, pos) = self.find_sublist_for_index(index)
-            .expect("Index out of bounds");
-        let sublist = &mut self.sublists[sublist_idx];
-        let (k, v) = sublist.remove(pos);
+    
+    fn pop_pair(&mut self, sublist_idx: usize, item_idx: usize) -> (K, V) {
+        let node = &mut self.sublists[sublist_idx];
+        let pair = node.remove(item_idx);
         self.fenwick.sub_at(sublist_idx, 1);
-        if sublist.is_empty() && sublist_idx > 0 {
+        if node.is_empty() && sublist_idx != 0 {
             self.sublists.remove(sublist_idx);
             self.rebuild_fenwick();
+            // TODO: pull some elements
         }
-        (k, v)
+        pair
     }
 
+    pub fn pop_first(&mut self) -> Option<(K, V)> {
+        let i = self.sublists.iter().position(|sl| !sl.is_empty())?;
+        Some(self.pop_pair(i, 0))
+    }
+    pub fn pop_index(&mut self, index: usize) -> (K, V) {
+        assert!(index < self.len(), "index out of bounds");
+        let (sublist_idx, _) = self.locate_node_with_idx_inbounds(index);
+        self.pop_pair(sublist_idx, index - self.fenwick.prefix_sum(sublist_idx, 0))
+    }
     pub fn pop_last(&mut self) -> Option<(K, V)> {
-        if let Some(i) = (0..self.sublists.len()).rev().find(|&i| !self.sublists[i].is_empty()) {
-            let sublist = &mut self.sublists[i];
-            let (k, v) = sublist.pop().unwrap();
-            self.fenwick.sub_at(i, 1);
-            if sublist.is_empty() && i > 0 {
-                self.sublists.remove(i);
-                self.rebuild_fenwick();
-            }
-            Some((k, v))
-        } else {
-            None
-        }
+        let i = self.sublists.iter().rposition(|sl| !sl.is_empty())?;
+        Some(self.pop_pair(i, self.sublists[i].len() - 1))
+    }
+    pub fn remove_entry<Q>(&mut self, key: &Q) -> Option<(K, V)> where K: Borrow<Q>, Q: Ord + ?Sized {
+        let (sublist_idx, node) = self.locate_node_with_key(key);
+        let j = node.binary_search_by_key(&key, |(k,_)| k.borrow()).ok()?;
+        Some(self.pop_pair(sublist_idx, j))
+    }
+    pub fn remove<Q>(&mut self, key: &Q) -> Option<V> where K: Borrow<Q>, Q: Ord + ?Sized {
+        self.remove_entry(key).map(|(_, v)| v)
     }
 
     pub fn range<Q, R>(&self, range: R) -> RangeMap<K, V>
@@ -362,21 +409,23 @@ where
         Q: Ord + ?Sized,
         R: RangeBounds<Q>,
     {
-        let start = match range.start_bound() {
+        let (start_sublist, start_place) = match range.start_bound() {
             Bound::Included(key) => self.find_lower_bound(key),
             Bound::Excluded(key) => self.find_upper_bound(key),
             Bound::Unbounded => (0, 0),
         };
-        let end = match range.end_bound() {
+        let (end_sublist, end_place) = match range.end_bound() {
             Bound::Included(key) => self.find_upper_bound(key),
             Bound::Excluded(key) => self.find_lower_bound(key),
             Bound::Unbounded => (self.sublists.len(), 0),
         };
+        if end_sublist == 0 && end_place == 0 {return RangeMap::empty();}
+        let end_sublist_incl = end_sublist - (end_place == 0) as usize;
         
-        let start_i = self.fenwick.prefix_sum(start.0, start.1);
-        let end_i   = self.fenwick.prefix_sum(end.0, end.1);
-        let mut sublists = self.sublists[start.0..end.0].iter();
-        let first_iter = sublists.next().map(|n| n[start.1..].iter());
+        let start_i = self.fenwick.prefix_sum(start_sublist, start_place);
+        let end_i   = self.fenwick.prefix_sum(end_sublist, end_place);
+        let mut sublists = self.sublists[start_sublist..=end_sublist_incl].iter();
+        let first_iter = sublists.next().map(|n| n[start_place..].iter());
         
         RangeMap {
             current_front_iter: first_iter,
@@ -391,21 +440,23 @@ where
         K: Borrow<Q>,
         R: RangeBounds<Q>,
     {
-        let start = match range.start_bound() {
+        let (start_sublist, start_place) = match range.start_bound() {
             Bound::Included(key) => self.find_lower_bound(key),
             Bound::Excluded(key) => self.find_upper_bound(key),
             Bound::Unbounded => (0, 0),
         };
-        let end = match range.end_bound() {
+        let (end_sublist, end_place) = match range.end_bound() {
             Bound::Included(key) => self.find_upper_bound(key),
             Bound::Excluded(key) => self.find_lower_bound(key),
             Bound::Unbounded => (self.sublists.len(), 0),
         };
+        if end_sublist == 0 && end_place == 0 {return RangeMut::empty();}
+        let end_sublist_incl = end_sublist - (end_place == 0) as usize;
         
-        let start_i = self.fenwick.prefix_sum(start.0, start.1);
-        let end_i   = self.fenwick.prefix_sum(end.0, end.1);
-        let mut sublists = self.sublists[start.0..end.0].iter_mut();
-        let first_iter = sublists.next().map(|n| n[start.1..].iter_mut());
+        let start_i = self.fenwick.prefix_sum(start_sublist, start_place);
+        let end_i   = self.fenwick.prefix_sum(end_sublist, end_place);
+        let mut sublists = self.sublists[start_sublist..=end_sublist_incl].iter_mut();
+        let first_iter = sublists.next().map(|n| n[start_place..].iter_mut());
         
         RangeMut {
             current_front_iter: first_iter,
@@ -426,60 +477,22 @@ where
         let end = match range.end_bound() {
             Bound::Included(&i) => i + 1,
             Bound::Excluded(&i) => i,
-            Bound::Unbounded => self.len(),
-        };
-        let (start_idx, start_pos) = self.find_sublist_for_index(start).unwrap_or((0, 0));
-        let (end_idx, _end_pos) = self.find_sublist_for_index(end - 1)
-            .map_or((self.sublists.len() - 1, self.sublists.last().map_or(0, |s| s.len())),
-                    |(idx, pos)| (idx, pos + 1));
+            Bound::Unbounded => usize::MAX,
+        }.min(self.len());
+        if start >= end {
+            return RangeMut::empty();
+        }
         
-        let mut sublists = self.sublists[start_idx..end_idx].iter_mut();
+        let (start_node, _) = self.locate_node_with_idx_inbounds(start);
+        let (end_node_incl, _) = self.locate_node_with_idx_inbounds(end - 1);
+        let start_pos = start - self.fenwick.prefix_sum(start_node, 0);
+        let mut sublists = self.sublists[start_node..=end_node_incl].iter_mut();
         let first_iter = sublists.next().map(|n| n[start_pos..].iter_mut());
         
         RangeMut {
             current_front_iter: first_iter,
             remaining_sublists: sublists,
             len: end.saturating_sub(start),
-        }
-    }
-
-    pub fn remove<Q>(&mut self, key: &Q) -> Option<V>
-    where
-        K: Borrow<Q>,
-        Q: Ord + ?Sized,
-    {
-        let (sublist_idx, pos) = self.find_sublist_for_key(key);
-        if let Some(j) = pos {
-            let sublist = &mut self.sublists[sublist_idx];
-            let (_, v) = sublist.remove(j);
-            self.fenwick.sub_at(sublist_idx, 1);
-            if sublist.is_empty() && sublist_idx > 0 {
-                self.sublists.remove(sublist_idx);
-                self.rebuild_fenwick();
-            }
-            Some(v)
-        } else {
-            None
-        }
-    }
-
-    pub fn remove_entry<Q>(&mut self, key: &Q) -> Option<(K, V)>
-    where
-        K: Borrow<Q>,
-        Q: Ord + ?Sized,
-    {
-        let (sublist_idx, pos) = self.find_sublist_for_key(key);
-        if let Some(j) = pos {
-            let sublist = &mut self.sublists[sublist_idx];
-            let kv = sublist.remove(j);
-            self.fenwick.sub_at(sublist_idx, 1);
-            if sublist.is_empty() && sublist_idx > 0 {
-                self.sublists.remove(sublist_idx);
-                self.rebuild_fenwick();
-            }
-            Some(kv)
-        } else {
-            None
         }
     }
 
@@ -491,102 +504,40 @@ where
     {
         for i in 0..self.sublists.len() {
             let sublist = &mut self.sublists[i];
-            let old_len = sublist.len();
-            
-            let mut new_sublist = Vec::new();
-            for (k, mut v) in sublist.drain(..) {
-                if f(k.borrow(), &mut v) {
-                    new_sublist.push((k, v));
-                }
-            }
-            *sublist = new_sublist;
-            
-            let new_len = sublist.len();
-            if old_len != new_len {
-                self.fenwick.sub_at(i, old_len - new_len);
-            }
-            if sublist.is_empty() && i > 0 {
-                self.sublists.remove(i);
-                self.rebuild_fenwick();
-                break; // Rebuild invalidates indices, so restart or handle carefully
-            }
+            sublist.retain_mut(|(k, v)| f((*k).borrow(), v));
         }
-    }
-
-    pub fn split_off<Q>(&mut self, key: &Q) -> Self
-    where
-        K: Borrow<Q>,
-        Q: Ord + ?Sized,
-    {
-        let (sublist_idx, pos) = self.find_sublist_for_key(key);
-        let split_pos = pos.unwrap_or_else(|| self.sublists[sublist_idx].partition_point(|(k, _)| k.borrow() < key));
-        let mut new_sublists = self.sublists.split_off(sublist_idx);
-        if split_pos > 0 {
-            let remaining = new_sublists[0].split_off(split_pos);
-            self.sublists.push(remaining);
-        }
-        let mut new_fenwick = FenwickTree::new();
-        for s in &new_sublists {
-            new_fenwick.push(s.len());
+        self.sublists.retain(|sl| !sl.is_empty());
+        if self.sublists.is_empty() {
+            self.sublists.push(Vec::with_capacity(NODE_CAPACITY));
         }
         self.rebuild_fenwick();
-        DequeMap {
-            sublists: new_sublists,
-            fenwick: new_fenwick,
-            node_capacity: NODE_CAPACITY,
+    }
+
+    /// Splits the collection into two at the given key. Returns everything after the given key, including the key.
+    pub fn split_off<Q>(&mut self, key: &Q) -> Self where K: Borrow<Q>, Q: Ord + ?Sized {
+        let (sublist_idx, pos) = self.find_lower_bound(key);
+        // self.sublists[0..sublist_idx] are ours
+        // self.sublists[sublist_idx][..pos] is ours
+        
+        let mut right = Self::new();
+        if let Some(sl) = self.sublists.get_mut(sublist_idx) {
+            right.sublists[0].append(&mut sl.split_off(pos));
+            right.sublists.append(&mut self.sublists.split_off(sublist_idx + 1));
         }
+        if self.sublists.last().unwrap().is_empty() && self.sublists.len() > 1 {
+            let _ = self.sublists.pop();
+        }
+        right.rebuild_fenwick();
+        self.rebuild_fenwick();
+        right
     }
 
     pub fn values(&self) -> Values<'_, K, V> {
-        Values(self.iter())
+        self.inner_iter().map(|(_, v)| v)
     }
 
     pub fn values_mut(&mut self) -> ValuesMut<'_, K, V> {
-        ValuesMut(self.iter_mut())
-    }
-
-    pub fn entry(&mut self, key: K) -> Entry<'_, K, V> {
-        let (sublist_idx, pos) = self.find_sublist_for_key(&key);
-        if let Some(j) = pos {
-            Entry::Occupied(OccupiedEntry {
-                map: self,
-                sublist_idx,
-                pos: j,
-            })
-        } else {
-            Entry::Vacant(VacantEntry {
-                map: self,
-                key,
-                sublist_idx,
-            })
-        }
-    }
-
-    pub fn first_entry(&mut self) -> Option<OccupiedEntry<'_, K, V>> {
-        for i in 0..self.sublists.len() {
-            if !self.sublists[i].is_empty() {
-                return Some(OccupiedEntry {
-                    map: self,
-                    sublist_idx: i,
-                    pos: 0,
-                });
-            }
-        }
-        None
-    }
-
-    pub fn last_entry(&mut self) -> Option<OccupiedEntry<'_, K, V>> {
-        let maybe_i = (0..self.sublists.len()).rev().find(|&i| !self.sublists[i].is_empty());
-        if let Some(i) = maybe_i {
-            let pos = self.sublists[i].len() - 1;
-            Some(OccupiedEntry {
-                map: self,
-                sublist_idx: i,
-                pos,
-            })
-        } else {
-            None
-        }
+        self.iter_mut().map(|(_, v)| v)
     }
 
     pub fn lower_bound<Q>(&self, bound: Bound<&Q>) -> CursorMap<'_, K, V>
@@ -595,15 +546,8 @@ where
         Q: Ord + ?Sized,
     {
         let (sublist_idx, pos) = match bound {
-            Bound::Included(key) => {
-                let (idx, pos) = self.find_sublist_for_key(key);
-                if let Some(p) = pos { (idx, p) } else { (idx, self.sublists[idx].partition_point(|(k, _)| k.borrow() < key)) }
-            }
-            Bound::Excluded(key) => {
-                let (idx, pos) = self.find_sublist_for_key(key);
-                let p = pos.unwrap_or_else(|| self.sublists[idx].partition_point(|(k, _)| k.borrow() < key));
-                if p < self.sublists[idx].len() { (idx, p + 1) } else { (idx + 1, 0) }
-            }
+            Bound::Included(key) => self.find_lower_bound(key),
+            Bound::Excluded(key) => self.find_upper_bound(key),
             Bound::Unbounded => (0, 0),
         };
         CursorMap {
@@ -654,41 +598,6 @@ impl<K: Ord + Clone, V: Clone> Clone for DequeMap<K, V> {
 
 // --- Iterator Implementations ---
 
-impl<'a, K, V> Iterator for IterMap<'a, K, V> {
-    type Item = (&'a K, &'a V);
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0.next().map(|(k, v)| (k, v))
-    }
-}
-
-impl<'a, K, V> Iterator for IterMut<'a, K, V> {
-    type Item = (&'a K, &'a mut V);
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0.next().map(|(k, v)| (&*k, v))
-    }
-}
-
-impl<'a, K, V> Iterator for Keys<'a, K, V> {
-    type Item = &'a K;
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0.next().map(|(k, _)| k)
-    }
-}
-
-impl<'a, K, V> Iterator for Values<'a, K, V> {
-    type Item = &'a V;
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0.next().map(|(_, v)| v)
-    }
-}
-
-impl<'a, K, V> Iterator for ValuesMut<'a, K, V> {
-    type Item = &'a mut V;
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0.next().map(|(_, v)| v)
-    }
-}
-
 impl<'a, K, V> Iterator for RangeMap<'a, K, V> {
     type Item = (&'a K, &'a V);
     
@@ -700,6 +609,15 @@ impl<'a, K, V> Iterator for RangeMap<'a, K, V> {
                 return Some((k, v));
             }
             self.current_front_iter = self.remaining_sublists.next().map(|sl| sl.iter());
+        }
+    }
+}
+impl<'a, K, V> RangeMap<'a, K, V> {
+    fn empty() -> Self {
+        Self {
+            current_front_iter: Some([].iter()),
+            remaining_sublists: [].iter(),
+            len: 0
         }
     }
 }
@@ -715,6 +633,15 @@ impl<'a, K, V> Iterator for RangeMut<'a, K, V> {
                 return Some((&*k, v));
             }
             self.current_front_iter = self.remaining_sublists.next().map(|sl| sl.iter_mut());
+        }
+    }
+}
+impl<'a, K, V> RangeMut<'a, K, V> {
+    fn empty() -> Self {
+        Self {
+            current_front_iter: Some([].iter_mut()),
+            remaining_sublists: [].iter_mut(),
+            len: 0
         }
     }
 }
@@ -756,14 +683,21 @@ impl<'a, K: 'a, V: 'a> CursorMap<'a, K, V> {
 
 impl<'a, K: Ord, V> VacantEntry<'a, K, V> {
     pub fn insert(self, value: V) -> &'a mut V {
-        let sublist = &mut self.map.sublists[self.sublist_idx];
-        let insert_pos = sublist.partition_point(|(k, _)| k < &self.key);
-        sublist.insert(insert_pos, (self.key, value));
-        self.map.fenwick.add_at(self.sublist_idx, 1);
-        if sublist.len() > self.map.node_capacity {
-            self.map.split_sublist(self.sublist_idx);
-        }
-        &mut self.map.sublists[self.sublist_idx][insert_pos].1
+        let VacantEntry{sublist_idx, map, key} = self;
+        
+        let sublist = &mut map.sublists[sublist_idx];
+        let j = match sublist.binary_search_by_key(&&key, |(k,_)| k) {
+            Ok(_) => unreachable!(),
+            Err(j) => {
+                sublist.insert(j, (key, value));
+                map.fenwick.add_at(sublist_idx, 1);
+                if sublist.len() > map.node_capacity {
+                    map.split_sublist(sublist_idx);
+                }
+                j
+            }
+        };
+        &mut map.sublists[sublist_idx][j].1
     }
 
     pub fn key(&self) -> &K {
@@ -793,25 +727,11 @@ impl<'a, K: Ord, V> OccupiedEntry<'a, K, V> {
     }
 
     pub fn remove(self) -> V {
-        let sublist = &mut self.map.sublists[self.sublist_idx];
-        let (_, v) = sublist.remove(self.pos);
-        self.map.fenwick.sub_at(self.sublist_idx, 1);
-        if sublist.is_empty() && self.sublist_idx > 0 {
-            self.map.sublists.remove(self.sublist_idx);
-            self.map.rebuild_fenwick();
-        }
-        v
+        self.map.pop_pair(self.sublist_idx, self.pos).1
     }
 
     pub fn remove_entry(self) -> (K, V) {
-        let sublist = &mut self.map.sublists[self.sublist_idx];
-        let kv = sublist.remove(self.pos);
-        self.map.fenwick.sub_at(self.sublist_idx, 1);
-        if sublist.is_empty() && self.sublist_idx > 0 {
-            self.map.sublists.remove(self.sublist_idx);
-            self.map.rebuild_fenwick();
-        }
-        kv
+        self.map.pop_pair(self.sublist_idx, self.pos)
     }
 
     pub fn insert(&mut self, value: V) -> V {
