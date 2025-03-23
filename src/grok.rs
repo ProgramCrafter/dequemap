@@ -90,7 +90,6 @@ where
 {
     // --- Auxiliary Functions ---
     
-    #[deprecated]
     fn find_sublist_for_key<Q>(&self, key: &Q) -> (usize, Option<usize>)
     where
         K: Borrow<Q>,
@@ -202,7 +201,7 @@ where
     /// Returns (sublist_idx, place) such that all elements with strictly smaller indices are lower than or equal to key,
     /// and >= indices have elements greater than key.
     fn find_upper_bound<Q>(&self, key: &Q) -> (usize, usize) where K: Borrow<Q>, Q: Ord + ?Sized {
-        let upper_node: Result<_, _> = self.locate_node_by(|sublist_idx, contained| {
+        let upper_node: Result<_, _> = self.locate_node_by(|_, contained| {
             if contained.is_empty() {
                 Ordering::Less
             } else if contained.last().unwrap().0.borrow() <= key {
@@ -683,18 +682,24 @@ impl<'a, K: 'a, V: 'a> CursorMap<'a, K, V> {
 
 impl<'a, K: Ord, V> VacantEntry<'a, K, V> {
     pub fn insert(self, value: V) -> &'a mut V {
-        let VacantEntry{sublist_idx, map, key} = self;
+        let VacantEntry{mut sublist_idx, map, key} = self;
         
         let sublist = &mut map.sublists[sublist_idx];
         let j = match sublist.binary_search_by_key(&&key, |(k,_)| k) {
             Ok(_) => unreachable!(),
-            Err(j) => {
+            Err(mut j) => {
                 sublist.insert(j, (key, value));
                 map.fenwick.add_at(sublist_idx, 1);
                 if sublist.len() > map.node_capacity {
                     map.split_sublist(sublist_idx);
+                    if j >= map.sublists[sublist_idx].len() {
+                        j -= map.sublists[sublist_idx].len();
+                        sublist_idx += 1;
+                    }
+                    j
+                } else {
+                    j
                 }
-                j
             }
         };
         &mut map.sublists[sublist_idx][j].1
