@@ -1,0 +1,7 @@
+[package]
+name = "dequemap"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ftree = "1.2.0"
