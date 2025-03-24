@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
+use std::ops::{Bound, RangeBounds, Index, IndexMut};
 use std::iter::{Flatten, FlatMap, Map};
-use std::ops::{Bound, RangeBounds};
 use std::borrow::Borrow;
 use std::cmp::Ordering;
 use ftree::FenwickTree;
@@ -913,7 +913,7 @@ where
     /// for (_, balance) in map.range_mut("B".."Cheryl") {
     ///     *balance += 100;
     /// }
-    /// for (_, balance) in map.range_mut((Excluded("Bob"), Unbounded)) {
+    /// for (_, balance) in map.range_mut::<&str, _>((Excluded("Bob"), Unbounded)) {
     ///     *balance += 60;
     /// }
     /// for (name, balance) in map.iter() {
@@ -977,7 +977,7 @@ where
     ///
     /// let mut map: DequeMap<&str, i32> =
     ///     [("Alice", 0), ("Bob", 0), ("Carol", 0), ("Cheryl", 0)].into();
-    /// for (_, balance) in map.range_mut_idx(1..4) {
+    /// for (_, balance) in map.range_mut_idx(1..3) {
     ///     *balance += 100;
     /// }
     /// for (_, balance) in map.range_mut_idx((Excluded(1), Unbounded)) {
@@ -1167,6 +1167,19 @@ impl<K: Ord + Clone, V: Clone> Clone for DequeMap<K, V> {
     }
 }
 
+
+impl<K, Q, V> Index<&Q> for DequeMap<K, V> where K: Borrow<Q> + Ord, Q: Ord + ?Sized {
+    type Output = V;
+    fn index(&self, index: &Q) -> &V {
+        self.get(index).unwrap()
+    }
+}
+impl<K, Q, V> IndexMut<&Q> for DequeMap<K, V> where K: Borrow<Q> + Ord, Q: Ord + ?Sized {
+    fn index_mut(&mut self, index: &Q) -> &mut V {
+        self.get_mut(index).unwrap()
+    }
+}
+
 // --- Iterator Implementations ---
 
 impl<'a, K, V> Iterator for RangeMap<'a, K, V> {
@@ -1322,6 +1335,13 @@ impl<'a, K: Ord, V> Entry<'a, K, V> {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => entry.insert(default),
         }
+    }
+    pub fn and_modify(mut self, effect: impl FnOnce(&mut V)) -> Self {
+        match &mut self {
+            Entry::Occupied(entry) => {effect(entry.get_mut())},
+            Entry::Vacant(_) => {},
+        }
+        self
     }
 }
 
