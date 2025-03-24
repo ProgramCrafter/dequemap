@@ -10,7 +10,7 @@ checksum = "9ae0379499242d3b9355c5069b43b9417def8c9b09903b930db1fe49318dc9e9"
 
 [[package]]
 name = "liquemap"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "ftree",
 ]
