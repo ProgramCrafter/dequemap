@@ -955,6 +955,63 @@ where
         }
     }
 
+    /// Constructs an immutable iterator over a sub-range of elements in the map, .
+    /// The range may also be entered as `(Bound<T>, Bound<T>)`. For example,
+    /// `range((Excluded(4), Included(10)))` will yield a left-exclusive, right-inclusive
+    /// range from 4 to 10.
+    ///
+    /// # Panics
+    ///
+    /// May panic if range `start > end`.
+    /// May panic if range `start == end` and both bounds are `Excluded`.
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```
+    /// use liquemap::LiqueMap;
+    /// use std::ops::Bound::{Excluded, Unbounded};
+    ///
+    /// let mut map: LiqueMap<&str, i32> =
+    ///     [("Alice", 10), ("Bob", 20), ("Carol", 30), ("Cheryl", 40)].into();
+    /// let mut total_balance = 0;
+    /// for (_, balance) in map.range_idx(1..3) {
+    ///     total_balance += balance;
+    /// }
+    /// assert_eq!(total_balance, 50);
+    /// ```
+    pub fn range_idx<R>(&self, range: R) -> RangeMap<'_, K, V>
+    where
+        R: RangeBounds<usize>,
+    {
+        let start = match range.start_bound() {
+            Bound::Included(&i) => i,
+            Bound::Excluded(&i) => i + 1,
+            Bound::Unbounded => 0,
+        };
+        let end = match range.end_bound() {
+            Bound::Included(&i) => i + 1,
+            Bound::Excluded(&i) => i,
+            Bound::Unbounded => usize::MAX,
+        }.min(self.len());
+        if start >= end {
+            return RangeMap::empty();
+        }
+        
+        let (start_node, _) = self.locate_node_with_idx_inbounds(start);
+        let (end_node_incl, _) = self.locate_node_with_idx_inbounds(end - 1);
+        let start_pos = start - self.fenwick.prefix_sum(start_node, 0);
+        let mut sublists = self.sublists[start_node..=end_node_incl].iter();
+        let first_iter = sublists.next().map(|n| n[start_pos..].iter());
+        
+        RangeMap {
+            current_front_iter: first_iter,
+            remaining_sublists: sublists,
+            len: end.saturating_sub(start),
+        }
+    }
+
     /// Constructs an iterator over a sub-range of elements in the map at given indices.
     /// It yields immutable references to keys and mutable ones to values, allowing to
     /// mutate the map's contents but not mess with keys ordering.
