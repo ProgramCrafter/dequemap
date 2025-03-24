@@ -5,7 +5,7 @@ use libfuzzer_sys::fuzz_target;
 use std::ops::Bound;
 
 use std::collections::BTreeMap as BeeMap;
-use dequemap::DequeMap as TestMap;
+use liquemap::LiqueMap as TestMap;
 
 #[derive(Debug, Arbitrary)]
 enum Command {

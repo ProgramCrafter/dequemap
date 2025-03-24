@@ -1,10 +1,10 @@
 [package]
-name = "dequemap"
+name = "liquemap"
 version = "0.2.0"
 edition = "2024"
 repository = "https://github.com/ProgramCrafter/dequemap"
 license = "Apache-2.0 OR MIT"
-description = "A two-level DequeMap with fast iteration. It supports fast indexing, including range iterators. Many implementation details are delegated to std's flatten iterators."
+description = "A two-level-list key-ordered DequeMap with fast iteration. It supports fast indexing, including range iterators. Many implementation details are delegated to std's flatten iterators."
 keywords = ["btreemap", "map", "order-statistic"]
 categories = ["data-structures"]
 

@@ -3,14 +3,14 @@
 version = 4
 
 [[package]]
-name = "dequemap"
-version = "0.2.0"
-dependencies = [
- "ftree",
-]
-
-[[package]]
 name = "ftree"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9ae0379499242d3b9355c5069b43b9417def8c9b09903b930db1fe49318dc9e9"
+
+[[package]]
+name = "liquemap"
+version = "0.2.0"
+dependencies = [
+ "ftree",
+]

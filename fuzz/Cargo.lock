@@ -23,19 +23,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "dequemap"
-version = "0.1.0"
-dependencies = [
- "ftree",
-]
-
-[[package]]
 name = "dequemap-fuzz"
 version = "0.0.0"
 dependencies = [
  "arbitrary",
- "dequemap",
  "libfuzzer-sys",
+ "liquemap",
 ]
 
 [[package]]
@@ -78,6 +71,13 @@ checksum = "cf78f52d400cf2d84a3a973a78a592b4adc535739e0a5597a0da6f0c357adc75"
 dependencies = [
  "arbitrary",
  "cc",
+]
+
+[[package]]
+name = "liquemap"
+version = "0.2.0"
+dependencies = [
+ "ftree",
 ]
 
 [[package]]

@@ -10,7 +10,7 @@ const NODE_CAPACITY: usize = 64;
 
 /// An ordered map based on a two-dimensional sorted list, similar to some deque implementations.
 #[derive(Debug)]
-pub struct DequeMap<K, V> {
+pub struct LiqueMap<K, V> {
     sublists: Vec<Vec<(K, V)>>,
     fenwick: FenwickTree<usize>,
     node_capacity: usize,
@@ -75,18 +75,18 @@ pub enum Entry<'a, K, V> {
 }
 
 pub struct VacantEntry<'a, K, V> {
-    map: &'a mut DequeMap<K, V>,
+    map: &'a mut LiqueMap<K, V>,
     key: K,
     sublist_idx: usize,
 }
 
 pub struct OccupiedEntry<'a, K, V> {
-    map: &'a mut DequeMap<K, V>,
+    map: &'a mut LiqueMap<K, V>,
     sublist_idx: usize,
     pos: usize,
 }
 
-impl<K, V> DequeMap<K, V>
+impl<K, V> LiqueMap<K, V>
 where
     K: Ord,
 {
@@ -236,13 +236,13 @@ where
     /// # Examples
     ///
     /// ```
-    /// use dequemap::DequeMap;
+    /// use liquemap::LiqueMap;
     ///
-    /// let mut a = DequeMap::new();
+    /// let mut a = LiqueMap::new();
     /// a.insert(2, "b");
     /// a.insert(3, "c"); // Note: Key (3) also present in b.
     ///
-    /// let mut b = DequeMap::new();
+    /// let mut b = LiqueMap::new();
     /// b.insert(3, "d"); // Note: Key (3) also present in a.
     /// b.insert(4, "e");
     /// b.insert(5, "f");
@@ -284,9 +284,9 @@ where
     /// Basic usage:
     ///
     /// ```
-    /// use dequemap::DequeMap;
+    /// use liquemap::LiqueMap;
     ///
-    /// let mut a = DequeMap::new();
+    /// let mut a = LiqueMap::new();
     /// a.insert(1, "a");
     /// a.clear();
     /// assert!(a.is_empty());
@@ -304,9 +304,9 @@ where
     /// Basic usage:
     ///
     /// ```
-    /// use dequemap::DequeMap;
+    /// use liquemap::LiqueMap;
     ///
-    /// let mut map = DequeMap::new();
+    /// let mut map = LiqueMap::new();
     /// assert_eq!(map.first_key_value(), None);
     /// map.insert(1, "b");
     /// map.insert(2, "a");
@@ -323,9 +323,9 @@ where
     /// Basic usage:
     ///
     /// ```
-    /// use dequemap::DequeMap;
+    /// use liquemap::LiqueMap;
     ///
-    /// let mut map = DequeMap::new();
+    /// let mut map = LiqueMap::new();
     /// map.insert(1, "b");
     /// map.insert(2, "a");
     /// assert_eq!(map.last_key_value(), Some((&2, &"a")));
@@ -339,9 +339,9 @@ where
     /// # Examples
     ///
     /// ```
-    /// use dequemap::DequeMap;
+    /// use liquemap::LiqueMap;
     ///
-    /// let mut map = DequeMap::new();
+    /// let mut map = LiqueMap::new();
     /// map.insert(1, "a");
     /// map.insert(2, "b");
     /// if let Some(mut entry) = map.first_entry() {
@@ -364,9 +364,9 @@ where
     /// # Examples
     ///
     /// ```
-    /// use dequemap::DequeMap;
+    /// use liquemap::LiqueMap;
     ///
-    /// let mut map = DequeMap::new();
+    /// let mut map = LiqueMap::new();
     /// map.insert(1, "a");
     /// map.insert(2, "b");
     /// if let Some(mut entry) = map.last_entry() {
@@ -392,9 +392,9 @@ where
     /// # Examples
     ///
     /// ```
-    /// use dequemap::DequeMap;
+    /// use liquemap::LiqueMap;
     ///
-    /// let mut map = DequeMap::new();
+    /// let mut map = LiqueMap::new();
     /// map.insert(1, "a");
     /// map.insert(2, "b");
     /// assert_eq!(map.get_index(2), None);
@@ -411,9 +411,9 @@ where
     /// # Examples
     ///
     /// ```
-    /// use dequemap::DequeMap;
+    /// use liquemap::LiqueMap;
     ///
-    /// let mut map = DequeMap::new();
+    /// let mut map = LiqueMap::new();
     /// map.insert(1, "a");
     /// map.insert(2, "b");
     /// assert_eq!(map.get_mut_index(4), None);
@@ -435,9 +435,9 @@ where
     /// # Examples
     ///
     /// ```
-    /// use dequemap::DequeMap;
+    /// use liquemap::LiqueMap;
     ///
-    /// let mut map = DequeMap::new();
+    /// let mut map = LiqueMap::new();
     /// map.insert(1, "a");
     /// assert_eq!(map.get_key_value(&1), Some((&1, &"a")));
     /// assert_eq!(map.get_key_value(&2), None);
@@ -457,9 +457,9 @@ where
     /// Basic usage:
     ///
     /// ```
-    /// use dequemap::DequeMap;
+    /// use liquemap::LiqueMap;
     ///
-    /// let mut map = DequeMap::new();
+    /// let mut map = LiqueMap::new();
     /// map.insert(1, "a");
     /// assert_eq!(map.get(&1), Some(&"a"));
     /// assert_eq!(map.get(&2), None);
@@ -477,9 +477,9 @@ where
     /// Basic usage:
     ///
     /// ```
-    /// use dequemap::DequeMap;
+    /// use liquemap::LiqueMap;
     ///
-    /// let mut map = DequeMap::new();
+    /// let mut map = LiqueMap::new();
     /// map.insert(1, "a");
     /// if let Some(x) = map.get_mut(&1) {
     ///     *x = "b";
@@ -502,9 +502,9 @@ where
     /// Basic usage:
     ///
     /// ```
-    /// use dequemap::DequeMap;
+    /// use liquemap::LiqueMap;
     ///
-    /// let mut map = DequeMap::new();
+    /// let mut map = LiqueMap::new();
     /// map.insert(1, "a");
     /// assert_eq!(map.contains_key(&1), true);
     /// assert_eq!(map.contains_key(&2), false);
@@ -519,9 +519,9 @@ where
     /// Basic usage:
     ///
     /// ```
-    /// use dequemap::DequeMap;
+    /// use liquemap::LiqueMap;
     ///
-    /// let mut count: DequeMap<&str, usize> = DequeMap::new();
+    /// let mut count: LiqueMap<&str, usize> = LiqueMap::new();
     ///
     /// // count the number of occurrences of letters in the vec
     /// for x in ["a", "b", "a", "c", "a", "b"] {
@@ -554,9 +554,9 @@ where
     /// Basic usage:
     ///
     /// ```
-    /// use dequemap::DequeMap;
+    /// use liquemap::LiqueMap;
     ///
-    /// let mut map = DequeMap::new();
+    /// let mut map = LiqueMap::new();
     /// assert_eq!(map.insert(37, "a"), None);
     /// assert!(!map.is_empty());
     ///
@@ -609,9 +609,9 @@ where
     /// Basic usage:
     ///
     /// ```
-    /// use dequemap::DequeMap;
+    /// use liquemap::LiqueMap;
     ///
-    /// let mut map = DequeMap::new();
+    /// let mut map = LiqueMap::new();
     /// map.insert(3, "c");
     /// map.insert(2, "b");
     /// map.insert(1, "a");
@@ -649,9 +649,9 @@ where
     /// Basic usage:
     ///
     /// ```
-    /// use dequemap::DequeMap;
+    /// use liquemap::LiqueMap;
     ///
-    /// let mut a = DequeMap::new();
+    /// let mut a = LiqueMap::new();
     /// assert!(a.is_empty());
     /// a.insert(1, "a");
     /// assert!(!a.is_empty());
@@ -666,9 +666,9 @@ where
     /// Basic usage:
     ///
     /// ```
-    /// use dequemap::DequeMap;
+    /// use liquemap::LiqueMap;
     ///
-    /// let mut a = DequeMap::new();
+    /// let mut a = LiqueMap::new();
     /// assert_eq!(a.len(), 0);
     /// a.insert(1, "a");
     /// assert_eq!(a.len(), 1);
@@ -677,7 +677,7 @@ where
         self.fenwick.prefix_sum(self.sublists.len(), 0)
     }
 
-    /// Makes a new, empty DequeMap.
+    /// Makes a new, empty LiqueMap.
     ///
     /// Allocates NODE_CAPACITY locations for key-value pairs, plus auxillary information.
     /// 
@@ -686,13 +686,13 @@ where
     /// Basic usage:
     ///
     /// ```
-    /// use dequemap::DequeMap;
+    /// use liquemap::LiqueMap;
     ///
-    /// let mut map = DequeMap::new();
+    /// let mut map = LiqueMap::new();
     /// map.insert(1, "a");  // entries can now be inserted
     /// ```
     pub fn new() -> Self {
-        let mut this = DequeMap {
+        let mut this = LiqueMap {
             sublists: Vec::new(),
             fenwick: FenwickTree::new(),
             node_capacity: NODE_CAPACITY,
@@ -721,9 +721,9 @@ where
     /// Draining elements in ascending order, while keeping a usable map each iteration.
     ///
     /// ```
-    /// use dequemap::DequeMap;
+    /// use liquemap::LiqueMap;
     ///
-    /// let mut map = DequeMap::new();
+    /// let mut map = LiqueMap::new();
     /// map.insert(1, "a");
     /// map.insert(2, "b");
     /// while let Some((key, _val)) = map.pop_first() {
@@ -745,9 +745,9 @@ where
     /// # Examples
     ///
     /// ```
-    /// use dequemap::DequeMap;
+    /// use liquemap::LiqueMap;
     ///
-    /// let mut map = DequeMap::new();
+    /// let mut map = LiqueMap::new();
     ///
     /// map.insert(1, "a");
     /// map.insert(2, "b");
@@ -768,9 +768,9 @@ where
     /// Draining elements in descending order, while keeping a usable map each iteration.
     ///
     /// ```
-    /// use dequemap::DequeMap;
+    /// use liquemap::LiqueMap;
     ///
-    /// let mut map = DequeMap::new();
+    /// let mut map = LiqueMap::new();
     /// map.insert(1, "a");
     /// map.insert(4, "b");
     /// while let Some((key, _val)) = map.pop_last() {
@@ -794,9 +794,9 @@ where
     /// Basic usage:
     ///
     /// ```
-    /// use dequemap::DequeMap;
+    /// use liquemap::LiqueMap;
     ///
-    /// let mut map = DequeMap::new();
+    /// let mut map = LiqueMap::new();
     /// map.insert(1, "a");
     /// assert_eq!(map.remove_entry(&1), Some((1, "a")));
     /// assert_eq!(map.remove_entry(&1), None);
@@ -817,9 +817,9 @@ where
     /// Basic usage:
     ///
     /// ```
-    /// use dequemap::DequeMap;
+    /// use liquemap::LiqueMap;
     ///
-    /// let mut map = DequeMap::new();
+    /// let mut map = LiqueMap::new();
     /// map.insert(1, "a");
     /// assert_eq!(map.remove(&1), Some("a"));
     /// assert_eq!(map.remove(&1), None);
@@ -845,10 +845,10 @@ where
     /// Basic usage:
     ///
     /// ```
-    /// use dequemap::DequeMap;
+    /// use liquemap::LiqueMap;
     /// use std::ops::Bound::Included;
     ///
-    /// let mut map = DequeMap::new();
+    /// let mut map = LiqueMap::new();
     /// map.insert(3, "a");
     /// map.insert(5, "b");
     /// map.insert(8, "c");
@@ -905,10 +905,10 @@ where
     /// Basic usage:
     ///
     /// ```
-    /// use dequemap::DequeMap;
+    /// use liquemap::LiqueMap;
     /// use std::ops::Bound::{Excluded, Unbounded};
     ///
-    /// let mut map: DequeMap<&str, i32> =
+    /// let mut map: LiqueMap<&str, i32> =
     ///     [("Alice", 0), ("Bob", 0), ("Carol", 0), ("Cheryl", 0)].into();
     /// for (_, balance) in map.range_mut("B".."Cheryl") {
     ///     *balance += 100;
@@ -972,10 +972,10 @@ where
     /// Basic usage:
     ///
     /// ```
-    /// use dequemap::DequeMap;
+    /// use liquemap::LiqueMap;
     /// use std::ops::Bound::{Excluded, Unbounded};
     ///
-    /// let mut map: DequeMap<&str, i32> =
+    /// let mut map: LiqueMap<&str, i32> =
     ///     [("Alice", 0), ("Bob", 0), ("Carol", 0), ("Cheryl", 0)].into();
     /// for (_, balance) in map.range_mut_idx(1..3) {
     ///     *balance += 100;
@@ -1030,9 +1030,9 @@ where
     /// # Examples
     ///
     /// ```
-    /// use dequemap::DequeMap;
+    /// use liquemap::LiqueMap;
     ///
-    /// let mut map: DequeMap<_, _> = [(0, 0), (2, 20), (3, 30), (5, 50), (6, 60)].into();
+    /// let mut map: LiqueMap<_, _> = [(0, 0), (2, 20), (3, 30), (5, 50), (6, 60)].into();
     /// // Keep only the elements with even-numbered keys.
     /// map.retain(|&k, _| k % 2 == 0);
     /// assert!(map.consume().eq(vec![(0, 0), (2, 20), (6, 60)]));
@@ -1090,10 +1090,10 @@ where
     /// Basic usage:
     ///
     /// ```
-    /// use dequemap::DequeMap;
+    /// use liquemap::LiqueMap;
     /// use std::ops::Bound;
     ///
-    /// let mut a = DequeMap::new();
+    /// let mut a = LiqueMap::new();
     /// a.insert(1, "a");
     /// a.insert(2, "b");
     /// a.insert(3, "c");
@@ -1124,9 +1124,9 @@ where
     /// # Examples
     ///
     /// ```
-    /// use dequemap::DequeMap;
+    /// use liquemap::LiqueMap;
     ///
-    /// let map: DequeMap<_, _> = [(1, "a"), (2, "b"), (3, "c")].into();
+    /// let map: LiqueMap<_, _> = [(1, "a"), (2, "b"), (3, "c")].into();
     /// assert_eq!(map.rank(&1), 0);
     /// assert_eq!(map.rank(&3), 2);
     /// assert_eq!(map.rank(&4), 3);
@@ -1141,9 +1141,9 @@ where
     }
 }
 
-impl<K: Ord, V, const N: usize> From<[(K, V); N]> for DequeMap<K, V> {
+impl<K: Ord, V, const N: usize> From<[(K, V); N]> for LiqueMap<K, V> {
     fn from(arr: [(K, V); N]) -> Self {
-        let mut map = DequeMap::new();
+        let mut map = LiqueMap::new();
         for (k, v) in arr {
             map.insert(k, v);
         }
@@ -1151,9 +1151,9 @@ impl<K: Ord, V, const N: usize> From<[(K, V); N]> for DequeMap<K, V> {
     }
 }
 
-impl<K: Ord + Clone, V: Clone> Clone for DequeMap<K, V> {
+impl<K: Ord + Clone, V: Clone> Clone for LiqueMap<K, V> {
     fn clone(&self) -> Self {
-        DequeMap {
+        LiqueMap {
             sublists: self.sublists.clone(),
             fenwick: self.fenwick.clone(),
             node_capacity: self.node_capacity,
@@ -1168,13 +1168,13 @@ impl<K: Ord + Clone, V: Clone> Clone for DequeMap<K, V> {
 }
 
 
-impl<K, Q, V> Index<&Q> for DequeMap<K, V> where K: Borrow<Q> + Ord, Q: Ord + ?Sized {
+impl<K, Q, V> Index<&Q> for LiqueMap<K, V> where K: Borrow<Q> + Ord, Q: Ord + ?Sized {
     type Output = V;
     fn index(&self, index: &Q) -> &V {
         self.get(index).unwrap()
     }
 }
-impl<K, Q, V> IndexMut<&Q> for DequeMap<K, V> where K: Borrow<Q> + Ord, Q: Ord + ?Sized {
+impl<K, Q, V> IndexMut<&Q> for LiqueMap<K, V> where K: Borrow<Q> + Ord, Q: Ord + ?Sized {
     fn index_mut(&mut self, index: &Q) -> &mut V {
         self.get_mut(index).unwrap()
     }
