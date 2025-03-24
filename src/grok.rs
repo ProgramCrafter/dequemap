@@ -54,11 +54,13 @@ pub type ValuesMut<'a, K, V> = Map<IterMut<'a, K, V>, fn(&'a mut (K, V)) -> &'a 
 type IterMut<'a, K, V> = FlatMap<std::slice::IterMut<'a, Vec<(K, V)>>, std::slice::IterMut<'a, (K, V)>, fn(&'a mut Vec<(K, V)>) -> std::slice::IterMut<'a, (K, V)>>;
 pub struct RangeMap<'a, K, V> {
     current_front_iter: Option<std::slice::Iter<'a, (K, V)>>,
+    current_back_iter: Option<std::slice::Iter<'a, (K, V)>>,
     remaining_sublists: std::slice::Iter<'a, Vec<(K, V)>>,
     len: usize,
 }
 pub struct RangeMut<'a, K, V> {
     current_front_iter: Option<std::slice::IterMut<'a, (K, V)>>,
+    current_back_iter: Option<std::slice::IterMut<'a, (K, V)>>,
     remaining_sublists: std::slice::IterMut<'a, Vec<(K, V)>>,
     len: usize,
 }
@@ -873,16 +875,25 @@ where
             Bound::Excluded(key) => self.find_lower_bound(key),
             Bound::Unbounded => (self.sublists.len(), 0),
         };
-        if end_sublist == 0 && end_place == 0 {return RangeMap::empty();}
-        let end_sublist_incl = end_sublist - (end_place == 0) as usize;
-        
         let start_i = self.fenwick.prefix_sum(start_sublist, start_place);
         let end_i   = self.fenwick.prefix_sum(end_sublist, end_place);
+        if start_i >= end_i {return RangeMap::empty();}
+        let end_sublist_incl = end_sublist - (end_place == 0) as usize;
+        let end_place_o = end_place.checked_sub(1).unwrap_or(self.sublists[end_sublist_incl].len() - 1);
         let mut sublists = self.sublists[start_sublist..=end_sublist_incl].iter();
-        let first_iter = sublists.next().map(|n| n[start_place..].iter());
+        
+        let first_iter = sublists.next().map(|n| {
+            if end_sublist_incl == start_sublist {
+                n[start_place..=end_place_o].iter()
+            } else {
+                n[start_place..].iter()
+            }
+        });
+        let back_iter = sublists.next_back().map(|n| n[..=end_place_o].iter());
         
         RangeMap {
             current_front_iter: first_iter,
+            current_back_iter: back_iter,
             remaining_sublists: sublists,
             len: end_i - start_i,
         }
@@ -913,7 +924,7 @@ where
     /// for (_, balance) in map.range_mut("B".."Cheryl") {
     ///     *balance += 100;
     /// }
-    /// for (_, balance) in map.range_mut::<&str, _>((Excluded("Bob"), Unbounded)) {
+    /// for (_, balance) in map.range_mut::<&str, _>((Excluded("Bob"), Unbounded)).rev() {
     ///     *balance += 60;
     /// }
     /// for (name, balance) in map.iter() {
@@ -940,16 +951,25 @@ where
             Bound::Excluded(key) => self.find_lower_bound(key),
             Bound::Unbounded => (self.sublists.len(), 0),
         };
-        if end_sublist == 0 && end_place == 0 {return RangeMut::empty();}
-        let end_sublist_incl = end_sublist - (end_place == 0) as usize;
-        
         let start_i = self.fenwick.prefix_sum(start_sublist, start_place);
         let end_i   = self.fenwick.prefix_sum(end_sublist, end_place);
+        if start_i >= end_i {return RangeMut::empty();}
+        
+        let end_sublist_incl = end_sublist - (end_place == 0) as usize;
+        let end_place_o = end_place.checked_sub(1).unwrap_or(self.sublists[end_sublist_incl].len() - 1);
         let mut sublists = self.sublists[start_sublist..=end_sublist_incl].iter_mut();
-        let first_iter = sublists.next().map(|n| n[start_place..].iter_mut());
+        let first_iter = sublists.next().map(|n| {
+            if end_sublist_incl == start_sublist {
+                n[start_place..=end_place_o].iter_mut()
+            } else {
+                n[start_place..].iter_mut()
+            }
+        });
+        let back_iter = sublists.next_back().map(|n| n[..=end_place_o].iter_mut());
         
         RangeMut {
             current_front_iter: first_iter,
+            current_back_iter: back_iter,
             remaining_sublists: sublists,
             len: end_i - start_i,
         }
@@ -1001,12 +1021,21 @@ where
         
         let (start_node, _) = self.locate_node_with_idx_inbounds(start);
         let (end_node_incl, _) = self.locate_node_with_idx_inbounds(end - 1);
-        let start_pos = start - self.fenwick.prefix_sum(start_node, 0);
+        let start_place = start - self.fenwick.prefix_sum(start_node, 0);
+        let end_place = end - self.fenwick.prefix_sum(end_node_incl, 0);
         let mut sublists = self.sublists[start_node..=end_node_incl].iter();
-        let first_iter = sublists.next().map(|n| n[start_pos..].iter());
+        let first_iter = sublists.next().map(|n| {
+            if end_node_incl == start_node {
+                n[start_place..end_place].iter()
+            } else {
+                n[start_place..].iter()
+            }
+        });
+        let back_iter = sublists.next_back().map(|n| n[..end_place].iter());
         
         RangeMap {
             current_front_iter: first_iter,
+            current_back_iter: back_iter,
             remaining_sublists: sublists,
             len: end.saturating_sub(start),
         }
@@ -1034,7 +1063,7 @@ where
     ///
     /// let mut map: LiqueMap<&str, i32> =
     ///     [("Alice", 0), ("Bob", 0), ("Carol", 0), ("Cheryl", 0)].into();
-    /// for (_, balance) in map.range_mut_idx(1..3) {
+    /// for (_, balance) in map.range_mut_idx(1..3).rev() {
     ///     *balance += 100;
     /// }
     /// for (_, balance) in map.range_mut_idx((Excluded(1), Unbounded)) {
@@ -1068,12 +1097,21 @@ where
         
         let (start_node, _) = self.locate_node_with_idx_inbounds(start);
         let (end_node_incl, _) = self.locate_node_with_idx_inbounds(end - 1);
-        let start_pos = start - self.fenwick.prefix_sum(start_node, 0);
+        let start_place = start - self.fenwick.prefix_sum(start_node, 0);
+        let end_place = end - self.fenwick.prefix_sum(end_node_incl, 0);
         let mut sublists = self.sublists[start_node..=end_node_incl].iter_mut();
-        let first_iter = sublists.next().map(|n| n[start_pos..].iter_mut());
+        let first_iter = sublists.next().map(|n| {
+            if end_node_incl == start_node {
+                n[start_place..end_place].iter_mut()
+            } else {
+                n[start_place..].iter_mut()
+            }
+        });
+        let back_iter = sublists.next_back().map(|n| n[..end_place].iter_mut());
         
         RangeMut {
             current_front_iter: first_iter,
+            current_back_iter: back_iter,
             remaining_sublists: sublists,
             len: end.saturating_sub(start),
         }
@@ -1239,72 +1277,130 @@ impl<K, Q, V> IndexMut<&Q> for LiqueMap<K, V> where K: Borrow<Q> + Ord, Q: Ord +
 
 // --- Iterator Implementations ---
 
-impl<'a, K, V> Iterator for RangeMap<'a, K, V> {
-    type Item = (&'a K, &'a V);
-    
-    fn next(&mut self) -> Option<Self::Item> {
-        self.len = self.len.checked_sub(1)?;    // return if == 0
-        
-        loop {
-            if let Some((k, v)) = self.current_front_iter.as_mut().unwrap().next() {
-                return Some((k, v));
-            }
-            self.current_front_iter = self.remaining_sublists.next().map(|sl| sl.iter());
-        }
-    }
-}
 impl<'a, K, V> RangeMap<'a, K, V> {
     fn empty() -> Self {
         Self {
             current_front_iter: Some([].iter()),
+            current_back_iter: Some([].iter()),
             remaining_sublists: [].iter(),
             len: 0
+        }
+    }
+    #[inline]
+    fn make_front(&mut self) {
+        match self.remaining_sublists.next() {
+            Some(it) => {self.current_front_iter = Some(it.iter());}
+            None     => {self.current_front_iter = self.current_back_iter.take();}
+        }
+    }
+    #[inline]
+    fn make_back(&mut self) {
+        match self.remaining_sublists.next_back() {
+            Some(it) => {println!("take_back:ok"); self.current_back_iter = Some(it.iter());}
+            None     => {println!("take_back:fr"); self.current_back_iter = self.current_front_iter.take();}
+        }
+    }
+}
+
+impl<'a, K, V> Iterator for RangeMap<'a, K, V> {
+    type Item = (&'a K, &'a V);
+    
+    fn count(self) -> usize {
+        self.len
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.len, Some(self.len))
+    }
+    
+    fn next(&mut self) -> Option<Self::Item> {
+        self.len = self.len.checked_sub(1)?;    // return if == 0
+        if self.current_front_iter.is_none() {self.make_front();}
+        loop {
+            let front_it = self.current_front_iter.as_mut().unwrap();
+            if let Some((k, v)) = front_it.next() {
+                return Some((k, v));
+            }
+            self.make_front();
+        }
+    }
+}
+impl<'a, K, V> DoubleEndedIterator for RangeMap<'a, K, V> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.len = self.len.checked_sub(1)?;    // return if == 0
+        if self.current_back_iter.is_none() {self.make_back();}
+        loop {
+            let back_it = self.current_back_iter.as_mut().unwrap();
+            if let Some((k, v)) = back_it.next_back() {
+                return Some((k, v));
+            }
+            self.make_back();
+        }
+    }
+}
+
+// --- Mutable Iterator Implementations ---
+
+impl<'a, K, V> RangeMut<'a, K, V> {
+    fn empty() -> Self {
+        Self {
+            current_front_iter: Some([].iter_mut()),
+            current_back_iter: Some([].iter_mut()),
+            remaining_sublists: [].iter_mut(),
+            len: 0
+        }
+    }
+    fn make_front(&mut self) {
+        match self.remaining_sublists.next() {
+            Some(it) => {self.current_front_iter = Some(it.iter_mut());}
+            None     => {self.current_front_iter = self.current_back_iter.take();}
+        }
+    }
+    fn make_back(&mut self) {
+        match self.remaining_sublists.next_back() {
+            Some(it) => {self.current_back_iter = Some(it.iter_mut());}
+            None     => {self.current_back_iter = self.current_front_iter.take();}
         }
     }
 }
 
 impl<'a, K, V> Iterator for RangeMut<'a, K, V> {
     type Item = (&'a K, &'a mut V);
-
+    
+    fn count(self) -> usize {
+        self.len
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.len, Some(self.len))
+    }
+    
     fn next(&mut self) -> Option<Self::Item> {
         self.len = self.len.checked_sub(1)?;    // return if == 0
-        
+        if self.current_front_iter.is_none() {self.make_front();}
         loop {
-            if let Some((k, v)) = self.current_front_iter.as_mut().unwrap().next() {
-                return Some((&*k, v));
+            let front_it = self.current_front_iter.as_mut().unwrap();
+            if let Some((k, v)) = front_it.next() {
+                return Some((k, v));
             }
-            self.current_front_iter = self.remaining_sublists.next().map(|sl| sl.iter_mut());
+            self.make_front();
         }
     }
 }
-impl<'a, K, V> RangeMut<'a, K, V> {
-    fn empty() -> Self {
-        Self {
-            current_front_iter: Some([].iter_mut()),
-            remaining_sublists: [].iter_mut(),
-            len: 0
+impl<'a, K, V> DoubleEndedIterator for RangeMut<'a, K, V> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.len = self.len.checked_sub(1)?;    // return if == 0
+        if self.current_back_iter.is_none() {self.make_back();}
+        loop {
+            let back_it = self.current_back_iter.as_mut().unwrap();
+            if let Some((k, v)) = back_it.next_back() {
+                return Some((k, v));
+            }
+            self.make_back();
         }
     }
 }
 
-impl<'a, K: 'a, V: 'a> Iterator for CursorMap<'a, K, V> {
-    type Item = (&'a K, &'a V);
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.sublist_idx >= self.sublists.len() {
-            return None;
-        }
-        let sublist = &self.sublists[self.sublist_idx];
-        if self.pos >= sublist.len() {
-            self.sublist_idx += 1;
-            self.pos = 0;
-            self.next()
-        } else {
-            let (k, v) = &sublist[self.pos];
-            self.pos += 1;
-            Some((k, v))
-        }
-    }
-}
+// --- Ref Iterator Implementations ---
+
 impl<'a, K: 'a, V: 'a> CursorMap<'a, K, V> {
     pub fn key(&self) -> Option<&K> {
         let mut sublists_it = self.sublists[self.sublist_idx..].iter();
